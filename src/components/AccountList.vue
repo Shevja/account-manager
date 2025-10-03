@@ -1,100 +1,37 @@
 <script setup lang="ts">
 import {Button, Column, DataTable, InputText, Message, Select, Textarea} from "primevue";
-import {onMounted, ref} from "vue";
-import type {Account, RecordType, Tag} from "@/models/accounts"
+import {reactive} from "vue";
 import {useAccountsStore} from "@/stores/accounts.ts";
+import {parseTags, stringifyTags} from "@/utils/tags.ts";
+import {type Account, type RecordType, RecordTypes} from "@/models/accounts"
+import {type AccountValidationErrors, validateAccount} from "@/validators/validateAccount.ts";
 
-const accounts = ref<Account[]>([])
 const accountsStore = useAccountsStore()
-const isLoading = ref<boolean>(true)
+const errors = reactive<Record<number, AccountValidationErrors>>({})
 
 const recordTypes: RecordType[] = [
-    {label: 'Локальная', value: 'local'},
-    {label: 'LDAP', value: 'LDAP'},
+    {label: 'Локальная', value: RecordTypes.Local},
+    {label: 'LDAP', value: RecordTypes.LDAP},
 ];
 
-function onAddAccount(): void {
-    // Берем последний известный id, и добавляем 1
-    // если список пуст то задаем 0
-    const lastAccount = accounts.value[accounts.value.length - 1];
-    const lastId = lastAccount ? lastAccount.id + 1 : 0
-
-    const newAccount: Account = {
-        id: lastId,
-        login: '',
-        password: '',
-        tags: [],
-        recordType: 'local',
-        loginError: false,
-        passwordError: false,
-    }
-
-    accounts.value.push(newAccount)
-}
-
-function onDeleteAccount(id: number): void {
-    const idx = accounts.value.findIndex(account => account.id === id)
-    accounts.value.splice(idx, 1)
+function onRemoveAccount(id: number) {
+    delete errors[id]
     accountsStore.removeAccount(id)
 }
 
-function onRecordTypeChange(account: Account): void {
-    if (account.recordType === 'LDAP') {
-        account.password = null
-    } else {
-        account.password = ''
-    }
+function onRecordTypeChange(account: Account) {
+    accountsStore.updateRecordType(account)
+    onAccountChange(account)
 }
 
-function parseTags(tags: string): Tag[] {
-    return tags
-        .split(';')
-        .map(tag => ({text: tag.trim()}))
-        .filter(tag => !!tag.text)
-}
+function onAccountChange(account: Account) {
+    const validation = validateAccount(account)
+    errors[account.id] = validation;
 
-function validateAccountForm(account: Account): boolean {
-    // Проверка что логин и пароль:
-    // 1. не пустые
-    // 2. их длина не больше 100 символов
-    // 3. тип аккаунта не LDAP (для пароля)
-
-    account.loginError = !account.login || account.login.length > 100
-    account.passwordError =
-        account.recordType === 'local' &&
-        (!account.password || account.password.length > 100)
-
-    return !(account.loginError || account.passwordError)
-}
-
-function onAccountChange(account: Account): void {
-    onRecordTypeChange(account);
-    saveAccount(account);
-}
-
-function saveAccount(account: Account): void {
-    if (validateAccountForm(account)) {
-        console.log('save account', account)
+    if (Object.keys(validation).length === 0) {
         accountsStore.saveAccount(account)
     }
 }
-
-function getData(): Account[] {
-    accountsStore.loadAccounts()
-    return accountsStore.accounts
-}
-
-onMounted(() => {
-    // fetch data
-    accounts.value.push(...getData())
-
-    accounts.value.forEach(account => {
-        account.loginError = false
-        account.passwordError = false
-    })
-
-    isLoading.value = false
-})
 </script>
 
 <template>
@@ -103,7 +40,7 @@ onMounted(() => {
 
             <div class="flex gap-4 items-center mb-3">
                 <h2 class="text-xl font-semibold">Учетные записи</h2>
-                <Button icon="pi pi-plus" aria-label="Save" variant="outlined" @click="onAddAccount"/>
+                <Button icon="pi pi-plus" aria-label="Save" variant="outlined" @click="accountsStore.addAccount"/>
             </div>
 
             <Message class="mb-4" severity="secondary">
@@ -117,8 +54,7 @@ onMounted(() => {
             </Message>
 
             <DataTable
-                :value="accounts"
-                :loading="isLoading"
+                :value="accountsStore.accounts"
                 :rows="5"
                 :rows-per-page-options="[5, 10, 20]"
                 size="small"
@@ -136,14 +72,14 @@ onMounted(() => {
                 <Column field="tags" header="Метки">
                     <template #body="slotProps">
                         <Textarea
-                            :model-value="slotProps.data.tags.map(t => t.text).join('; ')"
+                            :model-value="stringifyTags(slotProps.data.tags)"
                             @update:model-value="val => slotProps.data.tags = parseTags(val)"
                             autoResize
                             rows="1"
                             class="w-full"
                             placeholder="Метки"
                             maxlength="50"
-                            @blur="saveAccount(slotProps.data)"
+                            @blur="onAccountChange(slotProps.data)"
                         />
                     </template>
                 </Column>
@@ -158,7 +94,7 @@ onMounted(() => {
                             optionValue="value"
                             class="w-full"
                             placeholder="Тип записи"
-                            @change="onAccountChange(slotProps.data)"
+                            @change="onRecordTypeChange(slotProps.data)"
                         />
                     </template>
                 </Column>
@@ -171,8 +107,8 @@ onMounted(() => {
                             class="w-full"
                             placeholder="Логин"
                             required
-                            :invalid="slotProps.data.loginError"
-                            @blur="saveAccount(slotProps.data)"
+                            :invalid="errors[slotProps.data.id]?.login"
+                            @blur="onAccountChange(slotProps.data)"
                         />
                     </template>
                 </Column>
@@ -189,8 +125,8 @@ onMounted(() => {
                             class="w-full"
                             placeholder="Пароль"
                             required
-                            :invalid="slotProps.data.passwordError"
-                            @blur="saveAccount(slotProps.data)"
+                            :invalid="errors[slotProps.data.id]?.password"
+                            @blur="onAccountChange(slotProps.data)"
                         />
                     </template>
                 </Column>
@@ -198,12 +134,13 @@ onMounted(() => {
                 <!-- Кнопка удаления записи -->
                 <Column>
                     <template #body="slotProps">
-                        <Button icon="pi pi-trash" variant="link" @click="onDeleteAccount(slotProps.data.id)"/>
+                        <Button
+                            icon="pi pi-trash"
+                            variant="link"
+                            @click="onRemoveAccount(slotProps.data.id)"
+                        />
                     </template>
                 </Column>
-
-                <!-- Пагинация -->
-
             </DataTable>
         </div>
     </section>

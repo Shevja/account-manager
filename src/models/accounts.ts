@@ -16,3 +16,8 @@ export interface RecordType {
     label: string,
     value: string,
 }
+
+export const RecordTypes = {
+    Local: 'local',
+    LDAP: 'LDAP',
+} as const;
