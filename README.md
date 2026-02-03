@@ -1,4 +1,7 @@
 # Форма управления учетными записями
+
+Vercel демо: https://account-manager-rosy.vercel.app/
+
 ## Технологии: Vue 3, TS, Pinia, PrimeVue
 
 ### Форма состоит из:
